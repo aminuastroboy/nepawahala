@@ -1,0 +1,5 @@
+import NepasubApp from '../components/NepasubApp'
+
+export default function Home() {
+  return <NepasubApp />
+}
