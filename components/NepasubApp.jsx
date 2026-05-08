@@ -8,9 +8,7 @@ export default function NepasubApp() {
   const [name, setName] = useState('')
   const [area, setArea] = useState('Kubwa, Abuja')
   const [status, setStatus] = useState('OFF')
-  const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
-  const [authReady, setAuthReady] = useState(false)
 
   useEffect(() => {
     let channel
@@ -23,39 +21,28 @@ export default function NepasubApp() {
           return
         }
 
-        // Restore local cache
         const savedName = localStorage.getItem('nepasub_name')
         const savedArea = localStorage.getItem('nepasub_area')
 
         if (savedName) setName(savedName)
         if (savedArea) setArea(savedArea)
 
-        // First check existing session
+        // Ensure anonymous auth exists
         const {
           data: { session }
         } = await supabase.auth.getSession()
 
-        if (session?.user) {
-          setUser(session.user)
-        } else {
-          // Create anonymous session
-          const { data, error } =
+        if (!session) {
+          const { error } =
             await supabase.auth.signInAnonymously()
 
           if (error) {
-            console.error('Auth failed:', error.message)
-          }
-
-          if (data?.user) {
-            setUser(data.user)
+            console.error('Auth error:', error.message)
           }
         }
 
-        setAuthReady(true)
-
         await fetchFeed()
 
-        // Subscribe to realtime
         channel = supabase
           .channel('live-checkins')
           .on(
@@ -65,9 +52,7 @@ export default function NepasubApp() {
               schema: 'public',
               table: 'checkins'
             },
-            () => {
-              fetchFeed()
-            }
+            () => fetchFeed()
           )
           .subscribe()
       } catch (err) {
@@ -103,8 +88,8 @@ export default function NepasubApp() {
   }
 
   async function submitCheckin(type) {
-    if (!supabase || !user || !authReady) {
-      console.error('Auth not ready')
+    if (!supabase) {
+      console.error('Supabase not ready')
       return
     }
 
@@ -113,11 +98,21 @@ export default function NepasubApp() {
     localStorage.setItem('nepasub_name', name)
     localStorage.setItem('nepasub_area', area)
 
+    // Get fresh session directly
+    const {
+      data: { session }
+    } = await supabase.auth.getSession()
+
+    if (!session?.user) {
+      console.error('No active session')
+      return
+    }
+
     const { error } = await supabase
       .from('checkins')
       .insert([
         {
-          user_id: user.id,
+          user_id: session.user.id,
           name: name || 'Anonymous',
           area,
           status: type
@@ -168,17 +163,15 @@ export default function NepasubApp() {
 
         <div className="grid grid-cols-2 gap-3">
           <button
-            disabled={!authReady}
             onClick={() => submitCheckin('ON')}
-            className="bg-green-500 text-white p-4 rounded-2xl disabled:opacity-50"
+            className="bg-green-500 text-white p-4 rounded-2xl"
           >
             Light Don Come
           </button>
 
           <button
-            disabled={!authReady}
             onClick={() => submitCheckin('OFF')}
-            className="bg-red-500 text-white p-4 rounded-2xl disabled:opacity-50"
+            className="bg-red-500 text-white p-4 rounded-2xl"
           >
             Light Don Go
           </button>
