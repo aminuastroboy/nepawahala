@@ -1,3 +1,7 @@
+if (!supabase) {
+  setLoading(false)
+  return
+}
 
 'use client'
 import { useEffect,useState } from 'react'
