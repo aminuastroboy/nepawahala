@@ -10,6 +10,7 @@ export default function NepasubApp() {
   const [status, setStatus] = useState('OFF')
   const [user, setUser] = useState(null)
   const [loading, setLoading] = useState(true)
+  const [authReady, setAuthReady] = useState(false)
 
   useEffect(() => {
     let channel
@@ -22,31 +23,39 @@ export default function NepasubApp() {
           return
         }
 
-        // Restore cached identity
+        // Restore local cache
         const savedName = localStorage.getItem('nepasub_name')
         const savedArea = localStorage.getItem('nepasub_area')
 
         if (savedName) setName(savedName)
         if (savedArea) setArea(savedArea)
 
-        // Anonymous auth
-        const { data, error } = await supabase.auth.signInAnonymously()
+        // First check existing session
+        const {
+          data: { session }
+        } = await supabase.auth.getSession()
 
-        console.log('Auth user:', data?.user)
-        console.log('Auth error:', error)
+        if (session?.user) {
+          setUser(session.user)
+        } else {
+          // Create anonymous session
+          const { data, error } =
+            await supabase.auth.signInAnonymously()
 
-        if (error) {
-          console.error('Auth failed:', error.message)
+          if (error) {
+            console.error('Auth failed:', error.message)
+          }
+
+          if (data?.user) {
+            setUser(data.user)
+          }
         }
 
-        if (data?.user) {
-          setUser(data.user)
-        }
+        setAuthReady(true)
 
-        // Initial load
         await fetchFeed()
 
-        // Realtime updates
+        // Subscribe to realtime
         channel = supabase
           .channel('live-checkins')
           .on(
@@ -56,14 +65,11 @@ export default function NepasubApp() {
               schema: 'public',
               table: 'checkins'
             },
-            (payload) => {
-              console.log('Realtime update:', payload)
+            () => {
               fetchFeed()
             }
           )
-          .subscribe((status) => {
-            console.log('Realtime status:', status)
-          })
+          .subscribe()
       } catch (err) {
         console.error('Init error:', err)
       } finally {
@@ -81,41 +87,35 @@ export default function NepasubApp() {
   }, [])
 
   async function fetchFeed() {
-    try {
-      if (!supabase) return
+    if (!supabase) return
 
-      const { data, error } = await supabase
-        .from('checkins')
-        .select('id,name,area,status,created_at')
-        .order('created_at', { ascending: false })
+    const { data, error } = await supabase
+      .from('checkins')
+      .select('*')
+      .order('created_at', { ascending: false })
 
-      console.log('Feed data:', data)
-      console.log('Feed error:', error)
-
-      if (error) {
-        console.error('Fetch error:', error.message)
-        return
-      }
-
-      setFeed(data ?? [])
-    } catch (err) {
-      console.error('Fetch exception:', err)
+    if (error) {
+      console.error('Fetch error:', error.message)
+      return
     }
+
+    setFeed(data ?? [])
   }
 
   async function submitCheckin(type) {
-    try {
-      setStatus(type)
+    if (!supabase || !user || !authReady) {
+      console.error('Auth not ready')
+      return
+    }
 
-      localStorage.setItem('nepasub_name', name)
-      localStorage.setItem('nepasub_area', area)
+    setStatus(type)
 
-      if (!supabase || !user) {
-        console.error('Missing supabase client or user')
-        return
-      }
+    localStorage.setItem('nepasub_name', name)
+    localStorage.setItem('nepasub_area', area)
 
-      const { error } = await supabase.from('checkins').insert([
+    const { error } = await supabase
+      .from('checkins')
+      .insert([
         {
           user_id: user.id,
           name: name || 'Anonymous',
@@ -124,28 +124,22 @@ export default function NepasubApp() {
         }
       ])
 
-      if (error) {
-        console.error('Insert error:', error.message)
-        return
-      }
-
-      // Refresh immediately after insert
-      await fetchFeed()
-    } catch (err) {
-      console.error('Submit error:', err)
+    if (error) {
+      console.error('Insert error:', error.message)
+      return
     }
+
+    await fetchFeed()
   }
 
   return (
     <div className="min-h-screen bg-gray-100 p-4">
       <div className="max-w-md mx-auto space-y-4">
-        {/* Header */}
         <div className="bg-white p-5 rounded-2xl shadow">
           <h1 className="text-3xl font-bold">⚡ Nepasub</h1>
           <p className="text-gray-500">{area}</p>
         </div>
 
-        {/* Identity */}
         <div className="bg-white p-5 rounded-2xl shadow space-y-3">
           <input
             value={name}
@@ -162,7 +156,6 @@ export default function NepasubApp() {
           />
         </div>
 
-        {/* Power Status */}
         <div className="bg-white p-8 rounded-2xl shadow text-center">
           <div className="text-6xl">
             {status === 'ON' ? '⚡' : '🌑'}
@@ -173,24 +166,24 @@ export default function NepasubApp() {
           </p>
         </div>
 
-        {/* Actions */}
         <div className="grid grid-cols-2 gap-3">
           <button
+            disabled={!authReady}
             onClick={() => submitCheckin('ON')}
-            className="bg-green-500 text-white p-4 rounded-2xl"
+            className="bg-green-500 text-white p-4 rounded-2xl disabled:opacity-50"
           >
             Light Don Come
           </button>
 
           <button
+            disabled={!authReady}
             onClick={() => submitCheckin('OFF')}
-            className="bg-red-500 text-white p-4 rounded-2xl"
+            className="bg-red-500 text-white p-4 rounded-2xl disabled:opacity-50"
           >
             Light Don Go
           </button>
         </div>
 
-        {/* Community Feed */}
         <div className="bg-white p-5 rounded-2xl shadow">
           <h2 className="font-bold mb-3">Community Feed</h2>
 
@@ -205,14 +198,9 @@ export default function NepasubApp() {
                   key={item.id}
                   className="border rounded-xl p-3"
                 >
-                  <p>
-                    <strong>{item.name || 'Anonymous'}</strong>
-                  </p>
+                  <p><strong>{item.name}</strong></p>
                   <p>{item.area}</p>
                   <p>Power {item.status}</p>
-                  <p className="text-xs text-gray-500">
-                    {new Date(item.created_at).toLocaleString()}
-                  </p>
                 </div>
               ))}
             </div>
