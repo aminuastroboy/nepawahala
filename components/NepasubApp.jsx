@@ -14,11 +14,21 @@ export default function NepasubApp() {
   useEffect(() => {
     let channel
 
-    async function init() {
-      if (!supabase) {
-        setLoading(false)
-        return
-      }
+    async function fetchFeed() {
+  if (!supabase) return
+
+  const { data, error } = await supabase
+    .from('checkins')
+    .select('id,name,area,status,created_at')
+    .order('created_at', { ascending: false })
+
+  if (error) {
+    console.error(error.message)
+    return
+  }
+
+  setFeed(data ?? [])
+}
 
       const savedName = localStorage.getItem('nepasub_name')
       const savedArea = localStorage.getItem('nepasub_area')
